@@ -1,0 +1,6 @@
+results/
+.snakemake/
+*.sam
+*.bam
+*.bai
+*.bt2

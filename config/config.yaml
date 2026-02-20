@@ -1,0 +1,8 @@
+fastq_dir: "data/fastq"
+ref_fasta: "data/reference/genome.fa"
+
+qc_dir: "results/qc"
+mapped_dir: "results/mapped"
+stats_dir: "results/stats"
+
+threads: 2

@@ -1,1 +1,113 @@
-c
+configfile: "config/config.yaml"
+
+SAMPLES = glob_wildcards(config["fastq_dir"] + "/{sample}_R1.fastq.gz").sample
+
+FASTQ_DIR  = config["fastq_dir"]
+QC_DIR     = config["qc_dir"]
+REF_FASTA  = config["ref_fasta"]
+MAPPED_DIR = config["mapped_dir"]
+STATS_DIR  = config["stats_dir"]
+
+rule all:
+    input:
+        # Task 1 outputs
+        expand(QC_DIR + "/fastqc/{sample}_R1_fastqc.html", sample=SAMPLES),
+        expand(QC_DIR + "/fastqc/{sample}_R2_fastqc.html", sample=SAMPLES),
+        QC_DIR + "/multiqc_report.html",
+
+        # Task 2 outputs
+        expand(MAPPED_DIR + "/{sample}.sorted.bam", sample=SAMPLES),
+        expand(MAPPED_DIR + "/{sample}.sorted.bam.bai", sample=SAMPLES),
+        expand(STATS_DIR + "/{sample}.flagstat.txt", sample=SAMPLES)
+
+# Task 1: Quality Control
+rule fastqc:
+    input:
+        r1 = FASTQ_DIR + "/{sample}_R1.fastq.gz",
+        r2 = FASTQ_DIR + "/{sample}_R2.fastq.gz"
+    output:
+        r1 = QC_DIR + "/fastqc/{sample}_R1_fastqc.html",
+        r2 = QC_DIR + "/fastqc/{sample}_R2_fastqc.html"
+    shell:
+        """
+        mkdir -p {QC_DIR}/fastqc
+        fastqc -o {QC_DIR}/fastqc {input.r1} {input.r2}
+        """
+
+rule multiqc:
+    input:
+        expand(QC_DIR + "/fastqc/{sample}_R1_fastqc.html", sample=SAMPLES),
+        expand(QC_DIR + "/fastqc/{sample}_R2_fastqc.html", sample=SAMPLES)
+    output:
+        QC_DIR + "/multiqc_report.html"
+    shell:
+        """
+        multiqc {QC_DIR}/fastqc -o {QC_DIR} -n multiqc_report.html
+        """
+# Task 2: Read Mapping
+
+# Build Bowtie2 index for the reference genome
+rule bowtie2_index:
+    input:
+        REF_FASTA
+    output:
+        REF_FASTA + ".1.bt2",
+        REF_FASTA + ".2.bt2",
+        REF_FASTA + ".3.bt2",
+        REF_FASTA + ".4.bt2",
+        REF_FASTA + ".rev.1.bt2",
+        REF_FASTA + ".rev.2.bt2"
+    shell:
+        """
+        bowtie2-build {input} {input}
+        """
+
+# Map paired-end reads to the reference using Bowtie2
+rule bowtie2_map:
+    input:
+        r1  = FASTQ_DIR + "/{sample}_R1.fastq.gz",
+        r2  = FASTQ_DIR + "/{sample}_R2.fastq.gz",
+        idx = rules.bowtie2_index.output
+    output:
+        temp(MAPPED_DIR + "/{sample}.sam")
+    threads: config["threads"]
+    shell:
+        """
+        mkdir -p {MAPPED_DIR}
+        bowtie2 -x {REF_FASTA} -1 {input.r1} -2 {input.r2} -S {output} -p {threads}
+        """
+
+# Convert SAM to BAM and sort
+rule sort_bam:
+    input:
+        MAPPED_DIR + "/{sample}.sam"
+    output:
+        MAPPED_DIR + "/{sample}.sorted.bam"
+    threads: config["threads"]
+    shell:
+        """
+        samtools view -bS {input} | samtools sort -@ {threads} -o {output}
+        """
+
+# Index the sorted BAM file
+rule index_bam:
+    input:
+        MAPPED_DIR + "/{sample}.sorted.bam"
+    output:
+        MAPPED_DIR + "/{sample}.sorted.bam.bai"
+    shell:
+        """
+        samtools index {input}
+        """
+
+# Generate mapping statistics
+rule flagstat:
+    input:
+        MAPPED_DIR + "/{sample}.sorted.bam"
+    output:
+        STATS_DIR + "/{sample}.flagstat.txt"
+    shell:
+        """
+        mkdir -p {STATS_DIR}
+        samtools flagstat {input} > {output}
+        """
